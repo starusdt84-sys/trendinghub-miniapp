@@ -124,27 +124,173 @@ function shareShort(videoId) {
 // ════════════════════════════════════════
 // 코인
 // ════════════════════════════════════════
+// ─── 실시간 시계 ───
+function startClock() {
+  function tick() {
+    const now = new Date();
+    const kst = new Date(now.getTime() + (9 * 60 * 60 * 1000) - (now.getTimezoneOffset() * 60 * 1000));
+    const h = String(kst.getUTCHours()).padStart(2,'0');
+    const m = String(kst.getUTCMinutes()).padStart(2,'0');
+    const s = String(kst.getUTCSeconds()).padStart(2,'0');
+    const el = document.getElementById('live-time');
+    if (el) el.textContent = `${h}:${m}:${s}`;
+  }
+  tick();
+  setInterval(tick, 1000);
+}
+
+// ─── USDT 실시간 차트 ───
+let usdtChart = null;
+const usdtHistory = [];
+const maxPoints = 30;
+
+function initUsdtChart() {
+  const canvas = document.getElementById('usdt-chart');
+  if (!canvas) return;
+  usdtChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: Array(maxPoints).fill(''),
+      datasets: [{
+        data: Array(maxPoints).fill(null),
+        borderColor: '#26a17b',
+        backgroundColor: 'rgba(38,161,123,.08)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+        spanGaps: false
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 400 },
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: {
+        x: { display: false },
+        y: {
+          display: true,
+          position: 'right',
+          ticks: {
+            color: 'rgba(255,255,255,.25)',
+            font: { size: 8 },
+            maxTicksLimit: 3,
+            callback: v => `₩${v.toFixed(1)}`
+          },
+          grid: { color: 'rgba(255,255,255,.04)' }
+        }
+      }
+    }
+  });
+}
+
+function updateUsdtChart(price) {
+  if (!usdtChart || !price) return;
+  usdtHistory.push(price);
+  if (usdtHistory.length > maxPoints) usdtHistory.shift();
+
+  const padded = Array(maxPoints).fill(null);
+  usdtHistory.forEach((v, i) => { padded[maxPoints - usdtHistory.length + i] = v; });
+
+  // 차트 색상: 첫값 대비 현재값
+  const first = usdtHistory[0];
+  const last = usdtHistory[usdtHistory.length - 1];
+  const isUp = last >= first;
+  const color = isUp ? '#22c55e' : '#ef4444';
+  usdtChart.data.datasets[0].data = padded;
+  usdtChart.data.datasets[0].borderColor = color;
+  usdtChart.data.datasets[0].backgroundColor = isUp ? 'rgba(34,197,94,.07)' : 'rgba(239,68,68,.07)';
+  usdtChart.update('active');
+}
+
 async function initCoin() {
+  startClock();
+  initUsdtChart();
   await Promise.all([loadCoinPrices(), loadKimp(), loadFearGreed()]);
-  setInterval(loadCoinPrices, 30000);
-  setInterval(loadKimp, 60000);
+  convertCoin();
+  convertTrx();
+  setInterval(loadCoinPrices, 10000);
+  setInterval(loadKimp, 30000);
 }
 
 async function loadCoinPrices() {
   try {
-    const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,ripple,dogecoin&vs_currencies=usd,krw&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true');
-    const d = await res.json();
-    const btc = d.bitcoin || {};
+    // CoinGecko + 업비트 + 빗썸 + 바이낸스 동시 호출
+    const [cgRes, upbitRes, bithumbRes, binanceRes] = await Promise.all([
+      fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana,ripple,dogecoin,tether&vs_currencies=usd,krw&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true'),
+      fetch('https://api.upbit.com/v1/ticker?markets=KRW-USDT'),
+      fetch('https://api.bithumb.com/public/ticker/USDT_KRW'),
+      fetch('https://api.binance.com/api/v3/ticker/24hr?symbol=USDTKRW').catch(() => null)
+    ]);
 
-    // 히어로
-    document.getElementById('hero-price').textContent = `$${(btc.usd||0).toLocaleString()}`;
-    const chg = btc.usd_24h_change || 0;
+    const cg = await cgRes.json();
+    const upbit = await upbitRes.json();
+    const bithumb = await bithumbRes.json();
+
+    const btc = cg.bitcoin || {};
+    const usdt = cg.tether || {};
+
+    // 히어로 - USDT 기준
+    const usdtKrw = usdt.krw || 0;
+    const usdtChg = usdt.krw_24h_change || 0;
+    document.getElementById('hero-price').textContent = `₩${usdtKrw.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})}`;
     const heroChg = document.getElementById('hero-chg');
-    heroChg.textContent = `${sign(chg)}% (24h)`;
-    heroChg.className = `coin-hero-chg ${cls(chg)}`;
+    heroChg.textContent = `${sign(usdtChg)}% (24h)`;
+    heroChg.className = `coin-hero-chg ${cls(usdtChg)}`;
     document.getElementById('hero-mcap').textContent = fmt(btc.usd_market_cap);
     document.getElementById('hero-vol').textContent = fmt(btc.usd_24h_vol);
     document.getElementById('hero-dom').textContent = '58.3%';
+
+    // 업데이트 시간
+    const now = new Date();
+    const kst = new Date(now.getTime() + (9*3600000) - (now.getTimezoneOffset()*60000));
+    const timeStr = `${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}:${String(kst.getUTCSeconds()).padStart(2,'0')}`;
+    const upEl = document.getElementById('hero-update');
+    if (upEl) upEl.textContent = `최근 업데이트 ${timeStr} KST`;
+
+    // 차트 업데이트
+    updateUsdtChart(usdtKrw);
+
+    // USDT 3거래소
+    const upbitUsdt = upbit[0]?.trade_price || 0;
+    const upbitChg = upbit[0]?.signed_change_rate * 100 || 0;
+
+    let bithumbUsdt = 0, bithumbChg = 0;
+    try {
+      const bd = bithumb.data;
+      bithumbUsdt = parseFloat(bd?.closing_price || 0);
+      bithumbChg = parseFloat(bd?.fluctate_rate_24H || 0);
+    } catch(e) {}
+
+    // 바이낸스 USDT/KRW (없으면 환율로 계산)
+    const rate = upbitUsdt || usdtKrw;
+    document.getElementById('hero-rate').textContent = `₩${Math.round(rate).toLocaleString()}`;
+
+    const setExchange = (id, chgId, price, chg) => {
+      const el = document.getElementById(id);
+      const chgEl = document.getElementById(chgId);
+      if (el) el.textContent = price > 0 ? `₩${price.toLocaleString(undefined,{minimumFractionDigits:1,maximumFractionDigits:1})}` : '-';
+      if (chgEl) {
+        chgEl.textContent = price > 0 ? `${sign(chg)}%` : '-';
+        chgEl.className = cls(chg);
+      }
+    };
+
+    setExchange('usdt-upbit', 'usdt-upbit-chg', upbitUsdt, upbitChg);
+    setExchange('usdt-bithumb', 'usdt-bithumb-chg', bithumbUsdt, bithumbChg);
+    setExchange('usdt-binance', 'usdt-binance-chg', usdtKrw, usdtChg);
+
+    // 스프레드 계산
+    const prices = [upbitUsdt, bithumbUsdt, usdtKrw].filter(p => p > 0);
+    if (prices.length >= 2) {
+      const spread = Math.max(...prices) - Math.min(...prices);
+      const spreadEl = document.getElementById('usdt-spread');
+      if (spreadEl) {
+        spreadEl.textContent = `₩${spread.toFixed(1)}`;
+        spreadEl.className = spread > 5 ? 'neu' : 'up';
+      }
+    }
 
     // 코인 목록
     const coins = [
@@ -155,8 +301,8 @@ async function loadCoinPrices() {
       { key: 'dogecoin', icon: 'Ð', bg: '#c2a63322', name: 'Dogecoin', tk: 'DOGE' },
     ];
 
-    document.getElementById('coin-list').innerHTML = coins.map((c,i) => {
-      const coin = d[c.key] || {};
+    document.getElementById('coin-list').innerHTML = coins.map(c => {
+      const coin = cg[c.key] || {};
       const p = coin.usd || 0;
       const ch = coin.usd_24h_change || 0;
       return `
@@ -173,6 +319,7 @@ async function loadCoinPrices() {
       `;
     }).join('');
   } catch(e) {
+    console.error('코인 로딩 실패', e);
     document.getElementById('coin-list').innerHTML = `<div style="font-size:12px;color:rgba(255,255,255,.3);padding:10px">데이터 로딩 실패</div>`;
   }
 }
@@ -508,10 +655,48 @@ function closeViewer() {
   document.getElementById('viewer-frame').src = 'about:blank';
 }
 
+// ─── 코인 변환기 ───
+let btcKrwPrice = 0;
+let trxKrwPrice = 0;
+
+async function convertCoin() {
+  try {
+    const amount = parseFloat(document.getElementById('conv-input')?.value) || 0;
+    if (btcKrwPrice === 0) {
+      const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tron&vs_currencies=krw');
+      const d = await res.json();
+      btcKrwPrice = d.bitcoin.krw;
+      trxKrwPrice = d.tron.krw;
+    }
+    const krw = btcKrwPrice * amount;
+    const el = document.getElementById('conv-result');
+    if (el) el.textContent = '₩' + Math.round(krw).toLocaleString();
+  } catch(e) {}
+}
+
+async function convertTrx() {
+  try {
+    const amount = parseFloat(document.getElementById('trx-input')?.value) || 0;
+    if (trxKrwPrice === 0) {
+      const res = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,tron&vs_currencies=krw');
+      const d = await res.json();
+      btcKrwPrice = d.bitcoin.krw;
+      trxKrwPrice = d.tron.krw;
+    }
+    const krw = trxKrwPrice * amount;
+    const el = document.getElementById('trx-result');
+    if (el) el.textContent = '₩' + Math.round(krw).toLocaleString();
+  } catch(e) {}
+}
+
 // ─── 초기 로딩 ───
 initShorts();
 
 // 30초마다 코인 갱신
 setInterval(() => {
-  if (currentPage === 'coin') { loadCoinPrices(); loadKimp(); }
-}, 30000);
+  if (currentPage === 'coin') {
+    loadCoinPrices(); loadKimp();
+    btcKrwPrice = 0; trxKrwPrice = 0;
+    convertCoin(); convertTrx();
+  }
+}, 10000);
