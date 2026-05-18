@@ -215,29 +215,56 @@ async function loadStockData() {
 // ─── 영상 데이터 ───
 async function loadVideoData() {
   try {
-    const videos = [
-      { platform: "YouTube", badge: "badge-red", title: "역대급 반전 있는 영상 진짜 소름돋음", views: "4,230,000", likes: "284,000", url: "https://youtube.com", hot: true },
-      { platform: "Reddit",  badge: "badge-yellow", title: "이게 실화냐고... 해외에서 찍힌 영상 ㅋㅋㅋ", views: "127,400", likes: "8,920", url: "https://reddit.com", hot: false },
-      { platform: "Twitter", badge: "badge-blue", title: "전세계 RT 폭발 중인 이 영상 뭐임?", views: "43,200", likes: "210,000", url: "https://twitter.com", hot: true },
+    // YouTube Data API로 실제 급상승 영상 수집
+    const ytRes = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=KR&maxResults=3&key=${YT_API_KEY}`
+    );
+    const ytData = await ytRes.json();
+    const ytVideos = (ytData.items || []).map(item => ({
+      platform: "YouTube",
+      badge: "badge-red",
+      videoId: item.id,
+      title: item.snippet.title,
+      views: parseInt(item.statistics.viewCount || 0).toLocaleString(),
+      likes: parseInt(item.statistics.likeCount || 0).toLocaleString(),
+      hot: parseInt(item.statistics.viewCount || 0) > 1_000_000
+    }));
+
+    const allVideos = ytVideos.length > 0 ? ytVideos : [
+      { platform: "YouTube", badge: "badge-red", videoId: "dQw4w9WgXcQ", title: "유튜브 급상승 영상", views: "1,000,000+", likes: "50,000+", hot: true },
     ];
 
-    document.getElementById("video-cards").innerHTML = videos.map(v => `
+    document.getElementById("video-cards").innerHTML = allVideos.map(v => `
       <div class="card" style="margin-bottom:10px">
-        <div class="yt-thumb">
-          <div class="play-btn">▶️</div>
+        <div id="player-${v.videoId}" class="yt-thumb" onclick="playVideo('${v.videoId}', this)" style="cursor:pointer">
+          <img src="https://img.youtube.com/vi/${v.videoId}/mqdefault.jpg"
+               style="width:100%;height:100%;object-fit:cover;border-radius:10px;position:absolute;top:0;left:0">
+          <div class="play-btn" style="position:relative;z-index:1;background:rgba(0,0,0,.5)">▶</div>
         </div>
-        <div class="row" style="margin-bottom:6px">
+        <div class="row" style="margin:8px 0 6px">
           <span class="badge ${v.badge}">${v.platform}</span>
           ${v.hot ? '<span class="badge badge-yellow">🔥 핫</span>' : ''}
         </div>
         <div class="main-text" style="margin-bottom:6px">${v.title}</div>
         <div class="sub-text">👁 ${v.views} · ❤️ ${v.likes}</div>
-        <button class="open-btn" onclick="openLink('${v.url}')">▶ 텔레그램에서 바로 보기</button>
       </div>
     `).join("");
   } catch(e) {
     console.error("영상 로딩 실패", e);
+    document.getElementById("video-cards").innerHTML = `<div class="loading">영상 로딩 실패 😅</div>`;
   }
+}
+
+// 텔레그램 미니앱 안에서 유튜브 재생
+function playVideo(videoId, thumbEl) {
+  const iframe = document.createElement("iframe");
+  iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1`;
+  iframe.style.cssText = "width:100%;height:100%;border:none;border-radius:10px;position:absolute;top:0;left:0";
+  iframe.allow = "autoplay; encrypted-media";
+  iframe.allowFullscreen = true;
+  thumbEl.style.position = "relative";
+  thumbEl.innerHTML = "";
+  thumbEl.appendChild(iframe);
 }
 
 // ─── 핫토픽 데이터 ───
@@ -288,7 +315,10 @@ async function loadNewsData() {
 }
 
 function openLink(url) {
-  if (tg) tg.openLink(url);
+  // 텔레그램 내부 WebView로 열기 (브라우저 안 열림)
+  if (tg) tg.openTelegramLink
+    ? window.open(url, "_blank")
+    : tg.openLink(url);
   else window.open(url, "_blank");
 }
 
