@@ -1,3 +1,4 @@
+const API_BASE = 'https://trendinghub-server.onrender.com';
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
 
